@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+
+	<head>
+		<meta charset="UTF-8">
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>是飞机就坚持100秒</title>
+		<style>
+			* {
+				font-family: "微软雅黑", Arial, Helvetica, sans-serif;
+			}
+
+			body {
+				margin: 0;
+				height: 100vh;
+				width: 100vw;
+				cursor: none;
+				/*隐藏鼠标指针，沉浸式体验*/
+				overflow: hidden;
+				background: linear-gradient(#809cf7, #badce4);
+			}
+
+			.health {
+				width: 0px;
+				height: 20px;
+				background-color: red;
+				z-index: 10;
+				transition: .3s;
+			}
+
+			.health-wrapper {
+				display: none;
+				width: 295px;
+				height: 20px;
+				border: rgba(255, 255, 255, .8) 3px solid;
+				border-radius: 10px;
+				overflow: hidden;
+				position: absolute;
+				top: 20px;
+				left: 10px;
+				background-color: rgba(255, 255, 255, .3);
+			}
+
+			.time {
+				display: none;
+				width: 300px;
+				height: 50px;
+				font-size: 50px;
+				line-height: 50px;
+				position: absolute;
+				top: 10px;
+				left: 50%;
+				transform: translateX(-50%);
+				font-weight: bolder;
+				text-align: center;
+				background-color: rgba(0, 0, 0, .2);
+				color: white;
+				pointer-events: none;
+				user-select: none;
+				z-index: 10;
+			}
+
+			.score,
+			.intro {
+				width: 500px;
+				height: 150px;
+				position: absolute;
+				top: 20%;
+				left: 50%;
+				transform: translateX(-50%);
+				display: none;
+				background-color: rgba(255, 255, 255, .5);
+				justify-content: center;
+				align-items: center;
+				text-align: center;
+			}
+
+			.intro {
+				display: block;
+				color: white;
+				background-color: rgba(0, 0, 0, .2);
+				line-height: 75px;
+				font-size: 40px;
+			}
+
+			.click {
+				height: 50px;
+				top: 40%;
+				background: none;
+				line-height: 50px;
+				font-size: 30px;
+			}
+
+			.score span {
+				line-height: 75px;
+				font-size: 50px;
+			}
+		</style>
+		<script type="text/javascript" src="js/three.js"></script>
+		<script type="text/javascript" src="js/TweenMax.min.js"></script>
+	</head>
+
+	<body>
+		<div class="intro">鼠标移动，左键开炮<br />点击开始</div>
+		<div class="health-wrapper">
+			<div class="health"></div>
+		</div>
+		<div class="time">0s</div>
+		<div class="score"><span>得分: 0 s<br />最高得分: 0 s</span></div>
+		<div class="click score">点击重新开始...</div>
+
+
+		<script>
+			var Colors = {
+				green: 0x00aa00,
+				white: 0xeeeeee,
+				brown: 0x59332e,
+				deepGreen: 0x004400,
+				brownDark: 0x23190f,
+				blue: 0x1E049E,
+				black: 0x222222,
+				red: 0xff0000,
+				yellow: 0xffff00
+			};
+
+			var scene, camera, renderer;
+			var hemisphereLight, shadowLight;
+			var sea, sky, airplane;
+			var deltaTime;
+			var game;
+			var health;
+			var oldTime = new Date().getTime();
+			var newTime = new Date().getTime();;
+			var pointer = new THREE.Vector2(0, 1);
+			var particlesPool = [];
+			var enemiesPool = [];
+			var rockets = [];
+
+			function createScene() {
+				scene = new THREE.Scene();
+				scene.fog = new THREE.Fog(0xf7d9aa, 100, 1100);
+
+				camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 10000);
+				camera.position.x = 0;
+				camera.position.z = 250;
+				camera.position.y = 100;
+
+				renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				renderer.shadowMap.enabled = true;
+
+				document.body.appendChild(renderer.domElement);
+
+				document.addEventListener('mousemove', onMouseMove);
+				document.addEventListener('mouseup', onMouseUp);
+				window.addEventListener('resize', onWindowResize);
+			}
+
+			function createLights() {
+				hemisphereLight = new THREE.HemisphereLight(0xaaaaaa, 0x000000, .9)
+
+				shadowLight = new THREE.DirectionalLight(0xffffff, .9);
+				shadowLight.position.set(150, 350, 350);
+				shadowLight.castShadow = true;
+
+				shadowLight.shadow.camera.left = -400;
+				shadowLight.shadow.camera.right = 400;
+				shadowLight.shadow.camera.top = 400;
+				shadowLight.shadow.camera.bottom = -400;
+				shadowLight.shadow.camera.near = 1;
+				shadowLight.shadow.camera.far = 1000;
+
+				shadowLight.shadow.mapSize.width = 2048;
+				shadowLight.shadow.mapSize.height = 2048;
+
+				ambientLight = new THREE.AmbientLight(0xdc8874, .5);
+
+				scene.add(hemisphereLight);
+				scene.add(shadowLight);
+				scene.add(ambientLight);
+			}
+
+			function Sea() {
+				var geom = new THREE.CylinderGeometry(1000, 1000, 800, 100, 20, false, 0, Math.PI * 4);
+				geom.rotateX(-Math.PI / 2);
+
+				var l = geom.attributes.position.array.length / 3;
+
+				this.waves = [];
+
+				for (var i = 0; i < l; i++) {
+					var vx = geom.attributes.position.array[3 * i];
+					var vy = geom.attributes.position.array[3 * i + 1];
+					var vz = geom.attributes.position.array[3 * i + 2];
+					this.waves.push({
+						x: vx,
+						y: vy,
+						z: vz,
+						ang: Math.random() * Math.PI * 2,
+						amp: 5 + Math.random() * 15,
+						speed: 0.016 + Math.random() * 0.032
+					});
+				};
+				var mat = new THREE.MeshPhongMaterial({
+					color: Colors.blue,
+					transparent: true,
+					opacity: .8,
+					flatShading: true,
+				});
+
+				this.mesh = new THREE.Mesh(geom, mat);
+				this.mesh.receiveShadow = true;
+			}
+
+			Sea.prototype.moveWaves = function () {
+				var verts = this.mesh.geometry.attributes.position.array;
+				var l = verts.length / 3;
+
+				for (var i = 0; i < l; i++) {
+					var vprops = this.waves[i];
+					verts[3 * i] = vprops.x + Math.cos(vprops.ang) * vprops.amp;
+					verts[3 * i + 1] = vprops.y + Math.sin(vprops.ang) * vprops.amp;
+
+					vprops.ang += vprops.speed;
+				}
+
+				this.mesh.geometry.attributes.position.needsUpdate = true;
+			}
+
+			function Cloud() {
+				this.mesh = new THREE.Object3D();
+
+				var geom = new THREE.SphereGeometry(20, 32, 16);
+
+				var mat = new THREE.MeshPhongMaterial({
+					color: Colors.white,
+				});
+
+				var nBlocs = 5 + Math.floor(Math.random() * 3);
+				for (var i = 0; i < nBlocs; i++) {
+					var m = new THREE.Mesh(geom, mat);
+
+					m.position.x = i * 10 + Math.random() * 10;
+					m.position.y = Math.random() * 20;
+					m.position.z = Math.random() * 10;
+
+					var s = .2 + Math.random() * .8;
+					m.scale.set(s, s, s);
+
+					m.castShadow = true;
+					m.receiveShadow = true;
+
+					this.mesh.add(m);
+				}
+			}
+
+			Cloud.prototype.breathe = function () {
+				var l = this.mesh.children.length;
+				for (var i = 0; i < l; i++) {
+					var m = this.mesh.children[i];
+					s = 1 + Math.cos(newTime * .003) * .2;
+					m.scale.set(s, s, s);
+				}
+			}
+
+			function Sky() {
+				this.mesh = new THREE.Object3D();
+				this.clouds = [];
+				this.nClouds = 25;
+
+				var stepAngle = Math.PI * 2 / this.nClouds;
+
+				for (var i = 0; i < this.nClouds; i++) {
+					var c = new Cloud();
+					this.clouds.push(c);
+					var a = stepAngle * i;
+					var h = 750 + Math.random() * 250;
+
+					c.mesh.position.y = Math.sin(a) * h;
+					c.mesh.position.x = Math.cos(a) * h;
+
+					c.mesh.rotation.z = a + Math.PI / 2;
+
+					c.mesh.position.z = -400 - Math.random() * 400;
+
+					var s = 1 + Math.random() * 2;
+					c.mesh.scale.set(s, s, s);
+
+					this.mesh.add(c.mesh);
+				}
+			}
+
+			Sky.prototype.moveClouds = function () {
+				for (var i = 0; i < this.nClouds; i++) {
+					var c = this.clouds[i];
+					c.breathe();
+				}
+			}
+
+			function AirPlane() {
+				this.mesh = new THREE.Object3D();
+
+				// 机身
+				var geomCockpit = new THREE.BoxGeometry(60, 50, 60);
+				var matCockpit = new THREE.MeshPhongMaterial({ color: Colors.green, flatShading: true });
+				var cockpit = new THREE.Mesh(geomCockpit, matCockpit);
+				cockpit.castShadow = true;
+				cockpit.receiveShadow = true;
+				this.mesh.add(cockpit);
+
+				// 驾驶舱
+				var geomEngine = new THREE.BoxGeometry(20, 40, 60);
+				var matEngine = new THREE.MeshPhongMaterial({ color: Colors.white, flatShading: true, transparent: true, opacity: .8 });
+				var engine = new THREE.Mesh(geomEngine, matEngine);
+				engine.position.set(40, -5, 0);
+				engine.castShadow = true;
+				engine.receiveShadow = true;
+				this.mesh.add(engine);
+
+				// 尾部
+				var geomTailPlane = new THREE.BoxGeometry(100, 20, 20);
+				var matTailPlane = new THREE.MeshPhongMaterial({ color: Colors.green, flatShading: true });
+				var tailPlane = new THREE.Mesh(geomTailPlane, matTailPlane);
+				tailPlane.position.set(-70, 0, 0);
+				tailPlane.castShadow = true;
+				tailPlane.receiveShadow = true;
+				this.mesh.add(tailPlane);
+
+				// 尾部螺旋桨支架
+				var geomTailPropeller = new THREE.BoxGeometry(5, 40, 20);
+				var matTailPropeller = new THREE.MeshPhongMaterial({ color: Colors.green, flatShading: true });
+				var tailPropeller = new THREE.Mesh(geomTailPropeller, matTailPropeller);
+				tailPropeller.position.set(-160, 10, 0);
+				tailPropeller.castShadow = true;
+				tailPropeller.receiveShadow = true;
+
+				var tailPropeller2 = tailPropeller.clone();
+				tailPropeller2.position.set(40, 0, 0);
+				tailPropeller.add(tailPropeller2);
+
+				var geomTailPropeller2 = new THREE.BoxGeometry(45, 5, 20);
+				var tailPropeller3 = new THREE.Mesh(geomTailPropeller2, matTailPropeller);
+				tailPropeller3.position.set(20, 20, 0);
+				tailPropeller3.castShadow = true;
+				tailPropeller3.receiveShadow = true;
+				tailPropeller.add(tailPropeller3);
+
+				var tailPropeller4 = tailPropeller3.clone();
+				tailPropeller4.position.set(20, -20, 0);
+				tailPropeller.add(tailPropeller4);
+
+				var geomTailPropeller3 = new THREE.BoxGeometry(40, 10, 10);
+				var tailPropeller5 = new THREE.Mesh(geomTailPropeller3, matTailPropeller);
+				tailPropeller5.position.set(35, -6, -10);
+				tailPropeller5.rotation.z = -Math.PI / 6;
+				tailPropeller5.castShadow = true;
+				tailPropeller5.receiveShadow = true;
+				tailPropeller.add(tailPropeller5);
+
+				this.mesh.add(tailPropeller);
+
+				// 尾部螺旋桨
+				var geomSideWing = new THREE.BoxGeometry(30, 5, 2);
+				var matSideWing = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				this.sideWing = new THREE.Mesh(geomSideWing, matSideWing);
+				this.sideWing.position.set(-140, 10, 0);
+				this.sideWing.castShadow = true;
+				this.sideWing.receiveShadow = true;
+				this.mesh.add(this.sideWing);
+
+				// 螺旋桨支架
+				var geomPropeller = new THREE.BoxGeometry(10, 20, 10);
+				var matPropeller = new THREE.MeshPhongMaterial({ color: Colors.brown, flatShading: true });
+				this.propeller = new THREE.Mesh(geomPropeller, matPropeller);
+				this.propeller.castShadow = true;
+				this.propeller.receiveShadow = true;
+
+				// 螺旋桨
+				var geomBlade = new THREE.BoxGeometry(200, 2, 20);
+				var matBlade = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+
+				var blade = new THREE.Mesh(geomBlade, matBlade);
+				blade.position.set(0, 8, 0);
+				blade.castShadow = true;
+				blade.receiveShadow = true;
+				this.propeller.add(blade);
+				this.propeller.position.set(0, 30, 0);
+				this.mesh.add(this.propeller);
+
+				// 起落架
+				var geomLanding = new THREE.BoxGeometry(100, 10, 15);
+				var matLanding = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				var landing = new THREE.Mesh(geomLanding, matLanding);
+				landing.position.set(5, -40, 30);
+				landing.castShadow = true;
+				landing.receiveShadow = true;
+				var landing2 = landing.clone();
+				landing2.position.set(5, -40, -30);
+				this.mesh.add(landing);
+				this.mesh.add(landing2);
+
+				var geomLanding2 = new THREE.BoxGeometry(10, 25, 10);
+				var matLanding2 = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				var landing3 = new THREE.Mesh(geomLanding2, matLanding2);
+				landing3.position.set(5, -30, 25);
+				landing3.rotation.x = -Math.PI / 6;
+				landing3.castShadow = true;
+				landing3.receiveShadow = true;
+				var landing4 = new THREE.Mesh(geomLanding2, matLanding2);
+				landing4.position.set(5, -30, -25);
+				landing4.rotation.x = Math.PI / 6;
+				landing4.castShadow = true;
+				landing4.receiveShadow = true;
+				this.mesh.add(landing3);
+				this.mesh.add(landing4);
+
+				// 武器架
+				var geomMissileRack = new THREE.BoxGeometry(20, 5, 130);
+				var matMissileRack = new THREE.MeshPhongMaterial({ color: Colors.black, flatShading: true });
+				var missileRack = new THREE.Mesh(geomMissileRack, matMissileRack);
+				missileRack.position.set(0, -1, 0);
+				missileRack.castShadow = true;
+				missileRack.receiveShadow = true;
+				this.mesh.add(missileRack);
+
+				// 武器
+				var geomMissile = new THREE.CylinderGeometry(6, 6, 70, 32);
+				var matMissile = new THREE.MeshPhongMaterial({ color: Colors.deepGreen, flatShading: true });
+				this.missile = new THREE.Mesh(geomMissile, matMissile);
+				this.missile.position.set(0, -10, 45);
+				this.missile.rotation.z = -Math.PI / 2;
+				this.missile.castShadow = true;
+				this.missile.receiveShadow = true;
+
+				const points = [];
+				for (let i = 0; i < 10; i++) {
+					points.push(new THREE.Vector2(Math.sin(i * 0.2) * 6 + 1, (i - 5) * 2));
+				}
+				var geomMissileHead = new THREE.LatheGeometry(points);
+				var matMissileHead = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				var missileHead = new THREE.Mesh(geomMissileHead, matMissileHead);
+				missileHead.position.set(0, 40, 0);
+				missileHead.castShadow = true;
+				missileHead.receiveShadow = true;
+				missileHead.rotation.z = Math.PI;
+				this.missile.add(missileHead);
+
+				var geomMissileTail = new THREE.BoxGeometry(15, 10, 3);
+				var matMissileTail = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				var missileTail = new THREE.Mesh(geomMissileTail, matMissileTail);
+				missileTail.position.set(-5, -29, 0);
+				missileTail.castShadow = true;
+				missileTail.receiveShadow = true;
+				var missileTail2 = missileTail.clone();
+				missileTail2.position.set(5, -29, -3);
+				missileTail2.rotation.y = Math.PI / 3;
+				var missileTail3 = missileTail.clone();
+				missileTail3.position.set(5, -29, 3);
+				missileTail3.rotation.y = -Math.PI / 3;
+				this.missile.add(missileTail);
+				this.missile.add(missileTail2);
+				this.missile.add(missileTail3);
+
+				this.missile2 = this.missile.clone();
+				this.missile2.position.set(0, -10, -45);
+				this.mesh.add(this.missile);
+				this.mesh.add(this.missile2);
+			}
+
+			function Enemy() {
+				var geom = new THREE.OctahedronGeometry(10, 1);
+				var mat = new THREE.MeshPhongMaterial({
+					color: Colors.yellow,
+					shininess: 0,
+					specular: 0xffffff,
+					flatShading: true
+				});
+				this.mesh = new THREE.Mesh(geom, mat);
+				this.mesh.castShadow = true;
+				this.speedY = 1;
+				this.speedX = 1;
+				this.baseY = 60 + Math.random() * 75;
+				this.baseX = 220 + Math.random() * 50;
+				this.Ystep = 10 + Math.random() * 30;
+				this.theta = Math.random() * Math.PI * 2;
+			}
+
+			function EnemiesHolder() {
+				this.mesh = new THREE.Object3D();
+			}
+
+			EnemiesHolder.prototype.spawnEnemies = function (difficulty) {
+				for (var i = 0; i < difficulty; i++) {
+					var enemy = new Enemy();
+
+					enemy.mesh.position.y = enemy.baseY;
+					enemy.mesh.position.x = enemy.baseX + Math.random() * i * 100;
+					enemy.speedX = 1 + difficulty / 8 * (.7 + Math.random());
+					enemy.speedY = 1 + difficulty / 4 * (.7 + Math.random());
+					enemy.theta = Math.random() * Math.PI * 2;
+
+					this.mesh.add(enemy.mesh);
+					enemiesPool.push(enemy);
+				}
+			}
+
+			EnemiesHolder.prototype.rotateEnemies = function () {
+				for (let i = 0; i < enemiesPool.length; i++) {
+					let enemy = enemiesPool[i];
+
+					enemy.mesh.position.y = enemy.baseY + Math.sin(newTime * .001 * enemy.speedY + enemy.theta) * enemy.Ystep;
+					enemy.mesh.position.x -= enemy.speedX;
+					enemy.mesh.rotation.x += Math.random() * .1;
+					enemy.mesh.rotation.y += Math.random() * .1;
+
+					if (rockets[0].isLaunched) {
+						let diffPosRocket1 = rockets[0].mesh.position.clone().sub(enemy.mesh.position.clone());
+						let dRocket1 = diffPosRocket1.length();
+						if (dRocket1 < 20) {
+							particlesHolder.spawnParticles(rockets[0].mesh.position.clone(), 30, Colors.red, 6, 50, particlesHolder.ALL);
+							for (let i = 0; i < enemiesPool.length; i++) {
+								let diffPosRocket = rockets[0].mesh.position.clone().sub(enemiesPool[i].mesh.position.clone());
+								let dRocket = diffPosRocket.length();
+								if (dRocket < 50) {
+									particlesHolder.spawnParticles(enemiesPool[i].mesh.position.clone(), 15, Colors.yellow, 3, 30, particlesHolder.ALL);
+									this.mesh.remove(enemiesPool[i].mesh);
+									enemiesPool.splice(i, 1);
+									scene.remove(rockets[0].mesh);
+									airplane.mesh.add(airplane.missile);
+									rockets[0].isLaunched = false;
+									i--;
+									continue;
+								}
+							}
+							i = -1;
+							continue;
+						}
+
+					}
+					if (rockets[1].isLaunched) {
+						var diffPosRocket2 = rockets[1].mesh.position.clone().sub(enemy.mesh.position.clone());
+						var dRocket2 = diffPosRocket2.length();
+						if (dRocket2 < 20) {
+							particlesHolder.spawnParticles(rockets[1].mesh.position.clone(), 30, Colors.red, 6, 50, particlesHolder.ALL);
+							for (let i = 0; i < enemiesPool.length; i++) {
+								let diffPosRocket = rockets[1].mesh.position.clone().sub(enemiesPool[i].mesh.position.clone());
+								let dRocket = diffPosRocket.length();
+								if (dRocket < 50) {
+									particlesHolder.spawnParticles(enemiesPool[i].mesh.position.clone(), 15, Colors.yellow, 3, 30, particlesHolder.ALL);
+									this.mesh.remove(enemiesPool[i].mesh);
+									enemiesPool.splice(i, 1);
+									scene.remove(rockets[1].mesh);
+									airplane.mesh.add(airplane.missile2);
+									rockets[1].isLaunched = false;
+									i--;
+									continue;
+								}
+							}
+							i = -1;
+							continue;
+						}
+					}
+					var diffPosPlane = airplane.mesh.position.clone().sub(enemy.mesh.position.clone());
+					var dPlane = diffPosPlane.length();
+					if (dPlane < 20) {
+						particlesHolder.spawnParticles(enemy.mesh.position.clone(), 15, Colors.yellow, 3, 30, particlesHolder.ALL);
+						particlesHolder.spawnParticles(airplane.mesh.position.clone(), 15, Colors.green, 3, 50, particlesHolder.ALL);
+
+						enemiesPool.splice(i, 1);
+						this.mesh.remove(enemy.mesh);
+						health.damageHealth(10);
+
+						i--;
+					} else if (enemy.mesh.position.x < -220) {
+						enemiesPool.splice(i, 1);
+						this.mesh.remove(enemy.mesh);
+						health.damageHealth(10);
+
+						i--;
+					}
+				}
+			}
+
+			EnemiesHolder.prototype.removeEnemy = function () {
+				for (let i = 0; i < enemiesPool.length; i++) {
+					this.mesh.remove(enemiesPool[i].mesh);
+				}
+				enemiesPool.splice(0, enemiesPool.length);
+			}
+
+			function Particle() {
+				var geom = new THREE.TetrahedronGeometry(3, 0);
+				var mat = new THREE.MeshPhongMaterial({
+					color: 0x009999,
+					shininess: 0,
+					specular: 0xffffff,
+					flatShading: true
+				});
+				this.mesh = new THREE.Mesh(geom, mat);
+			}
+
+			Particle.prototype.explode = function (pos, color, scale, range, orientation, angle = Math.PI / 4, sleep = 1) {
+				var _this = this;
+				var _p = this.mesh.parent;
+				this.mesh.material.color = new THREE.Color(color);
+				this.mesh.material.needsUpdate = true;
+				this.mesh.scale.set(scale, scale, scale);
+				var targetX;
+				var targetY;
+				let deltaPosi = (Math.random() * 1) * range;
+				let deltaNega = (-Math.random() * 1) * range;
+				switch (orientation) {
+					case 0:
+						targetX = pos.x + (-1 + Math.random() * 2) * range;
+						targetY = pos.y + (-1 + Math.random() * 2) * range;
+						break;
+					case 1:
+						targetX = pos.x + (-1 + Math.random() * 2) * deltaPosi * Math.tan(angle);
+						targetY = pos.y + deltaPosi;
+						break;
+					case 2:
+						targetX = pos.x + deltaPosi;
+						targetY = pos.y + (-1 + Math.random() * 2) * deltaPosi * Math.tan(angle);
+						break;
+					case 3:
+						targetX = pos.x + (-1 + Math.random() * 2) * deltaNega * Math.tan(angle);
+						targetY = pos.y + deltaNega;
+						break;
+					case 4:
+						targetX = pos.x + deltaNega;
+						targetY = pos.y + (-1 + Math.random() * 2) * deltaNega * Math.tan(angle);
+						break;
+					default:
+						break;
+				}
+				var speed = .6 + Math.random() * .2;
+				TweenMax.to(this.mesh.rotation, speed, { x: Math.random() * 12, y: Math.random() * 12 });
+				TweenMax.to(this.mesh.scale, speed, { x: .1, y: .1, z: .1 });
+				TweenMax.to(this.mesh.position, speed, {
+					x: targetX, y: targetY, delay: Math.random() * .1 * sleep, ease: Power2.easeOut, onComplete: function () {
+						if (_p) _p.remove(_this.mesh);
+						_this.mesh.scale.set(1, 1, 1);
+						particlesPool.unshift(_this);
+					}
+				});
+			}
+
+			function ParticlesHolder() {
+				this.mesh = new THREE.Object3D();
+				this.ALL = 0;
+				this.NORTH = 1;
+				this.EAST = 2;
+				this.SOUTH = 3;
+				this.WEST = 4;
+			}
+
+			ParticlesHolder.prototype.spawnParticles = function (pos, density, color, scale, range, orientation, angle, sleep) {
+				var nPArticles = density;
+				for (var i = 0; i < nPArticles; i++) {
+					var particle;
+					if (particlesPool.length) {
+						particle = particlesPool.pop();
+					} else {
+						particle = new Particle();
+					}
+					this.mesh.add(particle.mesh);
+					particle.mesh.visible = true;
+					particle.mesh.position.x = pos.x;
+					particle.mesh.position.y = pos.y;
+					particle.mesh.position.z = pos.z;
+					particle.explode(pos, color, scale, range, orientation, angle, sleep);
+				}
+			}
+
+
+			function Rocket() {
+
+				let geomMissile = new THREE.CylinderGeometry(6, 6, 70, 32);
+				let matMissile = new THREE.MeshPhongMaterial({ color: Colors.deepGreen, flatShading: true });
+				let missile = new THREE.Mesh(geomMissile, matMissile);
+				missile.rotation.z = -Math.PI / 2;
+				missile.castShadow = true;
+				missile.receiveShadow = true;
+
+				const points = [];
+				for (let i = 0; i < 10; i++) {
+					points.push(new THREE.Vector2(Math.sin(i * 0.2) * 6 + 1, (i - 5) * 2));
+				}
+				let geomMissileHead = new THREE.LatheGeometry(points);
+				let matMissileHead = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				let missileHead = new THREE.Mesh(geomMissileHead, matMissileHead);
+				missileHead.position.set(0, 40, 0);
+				missileHead.castShadow = true;
+				missileHead.receiveShadow = true;
+				missileHead.rotation.z = Math.PI;
+				missile.add(missileHead);
+
+				let geomMissileTail = new THREE.BoxGeometry(15, 10, 3);
+				let matMissileTail = new THREE.MeshPhongMaterial({ color: Colors.brownDark, flatShading: true });
+				let missileTail = new THREE.Mesh(geomMissileTail, matMissileTail);
+				missileTail.position.set(-5, -29, 0);
+				missileTail.castShadow = true;
+				missileTail.receiveShadow = true;
+				let missileTail2 = missileTail.clone();
+				missileTail2.position.set(5, -29, -3);
+				missileTail2.rotation.y = Math.PI / 3;
+				let missileTail3 = missileTail.clone();
+				missileTail3.position.set(5, -29, 3);
+				missileTail3.rotation.y = -Math.PI / 3;
+				missile.add(missileTail);
+				missile.add(missileTail2);
+				missile.add(missileTail3);
+
+				this.mesh = missile;
+				this.speed = 3;
+				this.isLaunched = false;
+			}
+
+			Rocket.prototype.launchRocket = function () {
+				if (!rockets[0].isLaunched) {
+					rockets[0].mesh.position.x = airplane.mesh.position.x;
+					rockets[0].mesh.position.y = airplane.mesh.position.y - 2.5;
+					rockets[0].mesh.position.z = airplane.mesh.position.z + 10.125;
+					rockets[0].isLaunched = true;
+					scene.add(rockets[0].mesh);
+					airplane.mesh.remove(airplane.missile);
+				} else if (!rockets[1].isLaunched) {
+					rockets[1].mesh.position.x = airplane.mesh.position.x;
+					rockets[1].mesh.position.y = airplane.mesh.position.y - 2.5;
+					rockets[1].mesh.position.z = airplane.mesh.position.z - 10.125;
+					rockets[1].isLaunched = true;
+					scene.add(rockets[1].mesh);
+					airplane.mesh.remove(airplane.missile2);
+				}
+			}
+
+			Rocket.prototype.rotateRocket = function () {
+				if (rockets[0].isLaunched) {
+					rockets[0].mesh.position.x += rockets[0].speed;
+					let position = rockets[0].mesh.position.clone();
+					position.x -= 11;
+					particlesHolder.spawnParticles(position, 10, Colors.red, 1, 50, particlesHolder.WEST, Math.PI / 4, 0);
+					if (rockets[0].mesh.position.x > 250) {
+						scene.remove(rockets[0].mesh);
+						airplane.mesh.add(airplane.missile);
+						rockets[0].isLaunched = false;
+					}
+				}
+				if (rockets[1].isLaunched) {
+					rockets[1].mesh.position.x += rockets[1].speed;
+					let position = rockets[1].mesh.position.clone();
+					position.x -= 11;
+					particlesHolder.spawnParticles(position, 10, Colors.red, 1, 50, particlesHolder.WEST, Math.PI / 4, 0);
+					if (rockets[1].mesh.position.x > 250) {
+						scene.remove(rockets[1].mesh);
+						airplane.mesh.add(airplane.missile2);
+						rockets[1].isLaunched = false;
+					}
+				}
+			}
+
+			Rocket.prototype.removeRocket = function () {
+				airplane.mesh.add(airplane.missile);
+				airplane.mesh.add(airplane.missile2);
+				scene.remove(rockets[0].mesh);
+				scene.remove(rockets[1].mesh);
+				rockets[0].isLaunched = false;
+				rockets[1].isLaunched = false;
+			}
+
+			function Health() {
+				this.health = 0;
+				this.healthDom = document.querySelector(".health");
+			}
+
+			Health.prototype.damageHealth = function (num) {
+				this.health -= num;
+				this.healthDom.style.width = this.health * 3 + "px";
+				ambientLight.intensity = 3;
+				if (this.health <= 0) {
+					game.gameOver();
+				}
+			}
+
+			Health.prototype.cureHealth = function (num) {
+				this.health += num;
+				this.healthDom.style.width = this.health * 3 + "px";
+			}
+
+			function Game() {
+				this.time = 0;
+				this.difficulty = 2;
+				this.maxScore = 0;
+				this.status = 0;
+			}
+
+			Game.prototype.reset = function () {
+				this.time = 0;
+				this.difficulty = 2;
+			}
+
+			Game.prototype.startGame = function () {
+				this.status = 1;
+				document.querySelector(".health-wrapper").style.display = "block";
+				document.querySelector(".time").style.display = "block";
+				document.querySelector(".intro").style.display = "none";
+				document.querySelectorAll(".score").forEach(element => {
+					element.style.display = "none";
+				});
+				setTimeout(() => {
+					health.cureHealth(100);
+				}, 1);
+				this.reset();
+				scene.add(airplane.mesh);
+			}
+
+			Game.prototype.gameOver = function () {
+				this.status = 0;
+				scene.remove(airplane.mesh);
+				rockets[0].removeRocket();
+				enemiesHolder.removeEnemy();
+				document.querySelector(".health-wrapper").style.display = "none";
+				document.querySelector(".time").style.display = "none";
+				let time = String(this.time);
+				let score = parseInt(this.time / 1000) +
+					"." + time.substring(time.length - 3, time.length - 1);
+				document.querySelector(".score").innerHTML = "<span>得分: " + score + "s" + "<br/>" + "最高得分: " + this.maxScore + "s</span>";
+				if (score > this.maxScore) {
+					this.maxScore = score;
+				}
+				document.querySelector(".score").style.display = "block";
+				document.removeEventListener('mouseup', onMouseUp);
+				setTimeout(() => {
+					document.querySelector(".click").style.display = "block";
+					document.addEventListener('mouseup', onMouseUp);
+				}, 2000);
+			}
+
+			Game.prototype.updateDifficulty = function () {
+				this.difficulty = 2 + parseInt(this.time / 5000);
+			}
+
+			function normalize(v, vmin, vmax, tmin, tmax) {
+
+				var nv = Math.max(Math.min(v, vmax), vmin);
+				var dv = vmax - vmin;
+				var pc = (nv - vmin) / dv;
+				var dt = tmax - tmin;
+				var tv = tmin + (pc * dt);
+				return tv;
+			}
+
+			function updatePlane() {
+
+				var targetY = normalize(pointer.y, -.75, .75, 25, 175);
+				var targetX = normalize(pointer.x, -.75, .75, -150, 150);
+
+				airplane.mesh.position.y += Math.max(Math.min((targetY - airplane.mesh.position.y) * 0.15, 3), -3);
+				airplane.mesh.position.x += Math.max(Math.min((targetX - airplane.mesh.position.x) * 0.15, 4), -4);
+
+				airplane.mesh.rotation.z = normalize((airplane.mesh.position.x - targetX) * 0.0128, -.75, .75, -Math.PI / 3, Math.PI / 3);
+				airplane.mesh.rotation.x = (airplane.mesh.position.y - targetY) * 0.0064;
+
+				airplane.propeller.rotation.y += normalize(targetY - airplane.mesh.position.y, -20, 60, 0.05, 1);
+				airplane.sideWing.rotation.z += 0.5;
+			}
+
+			function createPlane() {
+				airplane = new AirPlane();
+				airplane.mesh.scale.set(.25, .25, .25);
+				airplane.mesh.position.y = 100;
+				airplane.mesh.position.x = -100;
+			}
+
+			function createSky() {
+				sky = new Sky();
+				sky.mesh.position.y = -600;
+				scene.add(sky.mesh);
+			}
+
+			function createSea() {
+				sea = new Sea();
+				sea.mesh.position.y = -1000;
+				scene.add(sea.mesh);
+			}
+
+			function createParticles() {
+				for (var i = 0; i < 10; i++) {
+					var particle = new Particle();
+					particlesPool.push(particle);
+				}
+				particlesHolder = new ParticlesHolder();
+				scene.add(particlesHolder.mesh);
+			}
+
+			function createEnemies() {
+				enemiesHolder = new EnemiesHolder();
+				scene.add(enemiesHolder.mesh);
+			}
+
+			function createRockets() {
+				let rocket = new Rocket();
+				rocket.mesh.scale.set(.25, .25, .25);
+				let rocket2 = new Rocket();
+				rocket2.mesh.scale.set(.25, .25, .25);
+				rockets.push(rocket);
+				rockets.push(rocket2);
+			}
+
+			function createHealth() {
+				health = new Health();
+			}
+
+			function createGame() {
+				game = new Game();
+			}
+
+			function loop() {
+				newTime = new Date().getTime();
+				deltaTime = newTime - oldTime;
+				oldTime = newTime;
+
+				sea.mesh.rotation.z += .005 * (1 + game.difficulty / 10);
+				sky.mesh.rotation.z += .01 * (1 + game.difficulty / 10);
+
+				sky.moveClouds();
+				sea.moveWaves();
+
+				if (game.status == 1) {
+					game.time += deltaTime;
+					let time = String(game.time);
+					document.querySelector(".time").innerHTML = parseInt(game.time / 1000) +
+						"." + time.substring(time.length - 3, time.length - 1) + "s";
+					updatePlane();
+					game.updateDifficulty();
+					if (enemiesPool.length == 0) {
+						enemiesHolder.spawnEnemies(game.difficulty);
+					}
+					if (rockets[0].isLaunched || rockets[1].isLaunched) {
+						rockets[0].rotateRocket();
+					}
+					enemiesHolder.rotateEnemies();
+				}
+
+				ambientLight.intensity += (.5 - ambientLight.intensity) * deltaTime * 0.005;
+				renderer.render(scene, camera);
+				requestAnimationFrame(loop);
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize(window.innerWidth, window.innerHeight);
+			}
+
+
+			function onMouseMove(event) {
+				var tx = -1 + (event.clientX / window.innerWidth) * 2;
+				var ty = 1 - (event.clientY / window.innerHeight) * 2;
+				pointer.set(tx, ty);
+			}
+
+			function onMouseUp(event) {
+				if (game.status == 0) {
+					game.startGame();
+				} else {
+					rockets[0].launchRocket();
+				}
+			}
+
+			function init() {
+				// 创建场景，相机和渲染器
+				createScene();
+
+				// 添加光源  
+				createLights();
+
+				// 添加对象
+				createSea();
+				createSky();
+				createPlane();
+				createRockets();
+				createEnemies();
+				createParticles();
+				createHealth();
+				createGame();
+
+				// 调用循环函数，在每帧更新对象的位置和渲染场景
+				loop();
+			}
+
+			init();
+		</script>
+	</body>
+
+</html>
